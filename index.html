@@ -216,18 +216,18 @@
             legendY -= 20;
         }
         }
-        
-        # Event listeners
+
+        // Event listeners
         document.getElementById('generate-btn').addEventListener('click', generateVisualization);
-        
-        # Also generate on Enter key
+
+        // Also generate on Enter key
         document.getElementById('text-input').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 generateVisualization();
             }
         });
-        
-        # Generate default visualization on load
+
+        // Generate default visualization on load
         window.addEventListener('load', generateVisualization);
     </script>
 </body>
