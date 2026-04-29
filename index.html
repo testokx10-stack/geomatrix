@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometric Translation of Text</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        #input-container {
+            margin-bottom: 20px;
+        }
+        #text-input {
+            padding: 10px;
+            width: 300px;
+            font-size: 16px;
+        }
+        #generate-btn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #generate-btn:hover {
+            background-color: #45a049;
+        }
+        #canvas-container {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+        .info {
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Geometric Translation of Text</h1>
+    <div id="input-container">
+        <input type="text" id="text-input" placeholder="Enter a word or phrase...">
+        <button id="generate-btn">Generate Visualization</button>
+    </div>
+    <div id="canvas-container">
+        <canvas id="plot-canvas" width="800" height="600"></canvas>
+    </div>
+    <div class="info">
+        Each letter is converted to an angle (a=1°, b=2°, ..., z=26°) and connected with lines.
+        Different words are shown in different colors, with dashed lines separating them.
+    </div>
+
+    <script>
+        // Letter values (a=1, b=2, ..., z=26)
+        const valeurs = {};
+        for (let i = 0; i < 26; i++) {
+            valeurs[String.fromCharCode(97 + i)] = i + 1; // a->1, b->2, ..., z->26
+        }
+
+        function motEnVecteurs(mot, longueur = 1.0) {
+            // Convert word to lowercase and filter only letters in our map
+            const lettres = mot.toLowerCase().split('').filter(ch => valeurs[ch] !== undefined);
+            const angles = lettres.map(ch => valeurs[ch] % 360);
+            
+            let points = [{x: 0, y: 0}];
+            for (const ang of angles) {
+                const rad = ang * Math.PI / 180; // Convert to radians
+                const lastPoint = points[points.length - 1];
+                points.push({
+                    x: lastPoint.x + longueur * Math.cos(rad),
+                    y: lastPoint.y + longueur * Math.sin(rad)
+                });
+            }
+            return points;
+        }
+
+        function generateVisualization() {
+            const input = document.getElementById('text-input').value.trim();
+            const phrase = input || "le silence est d or";
+            const mots = phrase.split(/\s+/).filter(mot => mot.length > 0);
+            
+            const canvas = document.getElementById('plot-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Set up drawing
+            ctx.lineWidth = 2;
+            
+            // Calculate bounds for scaling
+            let minX = 0, maxX = 0, minY = 0, maxY = 0;
+            const allPoints = [];
+            
+            for (let i = 0; i < mots.length; i++) {
+                const pts = motEnVecteurs(mots[i], 1.0); // Using length=1.0 like original
+                allPoints.push({word: mots[i], points: pts});
+                
+                // Update bounds
+                for (const pt of pts) {
+                    minX = Math.min(minX, pt.x);
+                    maxX = Math.max(maxX, pt.x);
+                    minY = Math.min(minY, pt.y);
+                    maxY = Math.max(maxY, pt.y);
+                }
+            }
+            
+            // Add some padding
+            const padding = 20;
+            const width = maxX - minX || 1;
+            const height = maxY - minY || 1;
+            
+            // Calculate scale to fit canvas
+            const scaleX = (canvas.width - 2 * padding) / width;
+            const scaleY = (canvas.height - 2 * padding) / height;
+            const scale = Math.min(scaleX, scaleY) * 0.9; // Leave some margin
+            
+            // Center the drawing
+            const offsetX = (canvas.width - width * scale) / 2;
+            const offsetY = (canvas.height - height * scale) / 2;
+            
+            // Function to convert coordinates to canvas pixels
+            function toCanvas(point) {
+                return {
+                    x: offsetX + (point.x - minX) * scale,
+                    y: offsetY + (maxY - point.y) * scale // Note: Y is flipped for canvas
+                };
+            }
+            
+        // Draw each word
+        const couleurs = [];
+        for (let i = 0; i < mots.length; i++) {
+            // Generate color using HSV to RGB conversion (similar to viridis)
+            const hue = (i / Math.max(1, mots.length - 1)) * 120; // Blue to green
+            const sat = 0.8;
+            const val = 0.9;
+            couleurs.push(`hsl(${hue}, ${sat*100}%, ${val*100}%)`);
+        }
+        
+        for (let i = 0; i < mots.length; i++) {
+            const {points} = allPoints[i];
+            const color = couleurs[i];
+            
+            // Draw the line
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            
+            const firstCanvas = toCanvas(points[0]);
+            ctx.moveTo(firstCanvas.x, firstCanvas.y);
+            
+            for (let j = 1; j < points.length; j++) {
+                const ptCanvas = toCanvas(points[j]);
+                ctx.lineTo(ptCanvas.x, ptCanvas.y);
+            }
+            
+            ctx.stroke();
+            
+            // Draw points
+            ctx.fillStyle = color;
+            for (const pt of points) {
+                const ptCanvas = toCanvas(pt);
+                ctx.beginPath();
+                ctx.arc(ptCanvas.x, ptCanvas.y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            
+            // Add dashed line separator between words
+            if (i < mots.length - 1) {
+                const lastPt = toCanvas(points[points.length - 1]);
+                const separatorLength = 15; // Length of separator
+                
+                // Calculate direction for separator (45 degrees down-right)
+                const angle = Math.PI / 4; // 45 degrees
+                const endX = lastPt.x + separatorLength * Math.cos(angle);
+                const endY = lastPt.y + separatorLength * Math.sin(angle);
+                
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 3]); // Dashed line
+                ctx.beginPath();
+                ctx.moveTo(lastPt.x, lastPt.y);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+                ctx.setLineDash([]); // Reset dash
+            }
+        }
+        
+        // Add title
+        ctx.fillStyle = '#333';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Traduction géométrique de: "${phrase}"`, canvas.width / 2, 20);
+        
+        // Add legend
+        const legendX = 10;
+        let legendY = canvas.height - 20;
+        ctx.font = '12px Arial';
+        for (let i = 0; i < mots.length; i++) {
+            ctx.fillStyle = couleurs[i];
+            ctx.fillRect(legendX, legendY - 10, 15, 15);
+            ctx.fillStyle = '#333';
+            ctx.fillText(mots[i], legendX + 20, legendY);
+            legendY -= 20;
+        }
+        }
+        
+        # Event listeners
+        document.getElementById('generate-btn').addEventListener('click', generateVisualization);
+        
+        # Also generate on Enter key
+        document.getElementById('text-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                generateVisualization();
+            }
+        });
+        
+        # Generate default visualization on load
+        window.addEventListener('load', generateVisualization);
+    </script>
+</body>
+</html>
