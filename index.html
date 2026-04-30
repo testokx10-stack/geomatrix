@@ -47,6 +47,33 @@
             background-color: #ccc;
             cursor: not-allowed;
         }
+        #audio-btn {
+            padding: 10px 20px;
+            background-color: #FF9800;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 10px;
+        }
+        #audio-btn:hover {
+            background-color: #E68900;
+        }
+        #audio-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #audio-download {
+            display: none;
+            padding: 10px 20px;
+            background-color: #9C27B0;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 10px;
+            text-decoration: none;
+        }
         #canvas-container {
             border: 1px solid #ccc;
             border-radius: 5px;
@@ -71,6 +98,8 @@
         <input type="text" id="text-input" placeholder="Enter a word or phrase...">
         <button id="generate-btn">Generate Visualization</button>
         <button id="download-btn" disabled>Download Image</button>
+        <button id="audio-btn" disabled>Generate Audio</button>
+        <a id="audio-download" href="#" download="output.wav">Download WAV</a>
     </div>
     <div id="canvas-container">
         <canvas id="plot-canvas" width="800" height="600"></canvas>
@@ -86,6 +115,35 @@
         for (let i = 0; i < 26; i++) {
             valeurs[String.fromCharCode(97 + i)] = i + 1; // a->1, b->2, ..., z->26
         }
+
+        // Parameters for audio generation
+        const params = {};
+
+        // Vowels (a, e, i, o, u, y) - frequencies
+        const voyelles = {
+            'a': [220, 1.0, 'voyelle'],
+            'e': [330, 1.0, 'voyelle'],
+            'i': [440, 1.0, 'voyelle'],
+            'o': [550, 1.0, 'voyelle'],
+            'u': [660, 1.0, 'voyelle'],
+            'y': [770, 1.0, 'voyelle'],
+        };
+
+        // Consonants
+        const consonnes_base = {
+            'b': [200, 0.8, 'consonne'], 'c': [250, 0.8, 'consonne'], 'd': [300, 0.8, 'consonne'],
+            'f': [350, 0.8, 'consonne'], 'g': [400, 0.8, 'consonne'], 'h': [450, 0.8, 'consonne'],
+            'j': [500, 0.8, 'consonne'], 'k': [550, 0.8, 'consonne'], 'l': [600, 0.8, 'consonne'],
+            'm': [650, 0.8, 'consonne'], 'n': [700, 0.8, 'consonne'], 'p': [750, 0.8, 'consonne'],
+            'q': [800, 0.8, 'consonne'], 'r': [850, 0.8, 'consonne'], 's': [150, 0.8, 'consonne'],
+            't': [200, 0.8, 'consonne'], 'v': [300, 0.8, 'consonne'], 'w': [400, 0.8, 'consonne'],
+            'x': [500, 0.8, 'consonne'], 'z': [600, 0.8, 'consonne'],
+        };
+
+        Object.assign(params, voyelles);
+        Object.assign(params, consonnes_base);
+
+        const default_param = [440, 0.5, 'silence'];
 
         function motEnVecteurs(mot, longueur = 1.0) {
             // Convert word to lowercase and filter only letters in our map
@@ -107,6 +165,7 @@
         function generateVisualization() {
             // Disable download button while generating
             document.getElementById('download-btn').disabled = true;
+            document.getElementById('audio-btn').disabled = true;
 
             const input = document.getElementById('text-input').value.trim();
             const phrase = input || "le silence est d or";
@@ -238,6 +297,7 @@
 
         // Enable download button
         document.getElementById('download-btn').disabled = false;
+        document.getElementById('audio-btn').disabled = false;
         }
 
         // Event listeners
@@ -253,6 +313,71 @@
         // Generate default visualization on load
         window.addEventListener('load', generateVisualization);
 
+        // Generate audio from text
+        function generateAudioFromText(text, sampleRate = 44100, durationPerLetter = 0.2, volume = 0.5) {
+            let audio = [];
+            for (let ch of text.toLowerCase()) {
+                let [freq, duree, typ] = params[ch] || default_param;
+                let nSamples = Math.floor(sampleRate * durationPerLetter * duree);
+                let t = new Array(nSamples).fill(0).map((_, i) => i / sampleRate);
+                let waveData = t.map(ti => volume * Math.sin(2 * Math.PI * freq * ti));
+                if (typ === 'consonne') {
+                    waveData = waveData.map(w => w + (Math.random() - 0.5) * 0.1);
+                }
+                audio.push(...waveData);
+            }
+            return new Float32Array(audio);
+        }
+
+        // Create WAV blob from audio data
+        function createWavBlob(audioData, sampleRate = 44100) {
+            const length = audioData.length;
+            const buffer = new ArrayBuffer(44 + length * 2);
+            const view = new DataView(buffer);
+
+            // WAV header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + length * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, length * 2, true);
+
+            // Audio data
+            for (let i = 0; i < length; i++) {
+                let sample = Math.max(-1, Math.min(1, audioData[i]));
+                view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        // Generate and prepare audio download
+        function generateAudio() {
+            const input = document.getElementById('text-input').value.trim();
+            const text = input || "le silence est d or";
+            const audioData = generateAudioFromText(text);
+            const wavBlob = createWavBlob(audioData);
+            const url = URL.createObjectURL(wavBlob);
+            const downloadLink = document.getElementById('audio-download');
+            downloadLink.href = url;
+            downloadLink.style.display = 'inline-block';
+            downloadLink.textContent = 'Download WAV';
+        }
+
         // Download function
         function downloadImage() {
             const canvas = document.getElementById('plot-canvas');
@@ -264,6 +389,7 @@
 
         // Event listeners
         document.getElementById('download-btn').addEventListener('click', downloadImage);
+        document.getElementById('audio-btn').addEventListener('click', generateAudio);
     </script>
 </body>
 </html>
