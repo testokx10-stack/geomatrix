@@ -44,6 +44,37 @@ params.update(consonnes_base)
 # Pour les lettres non trouvées (accentuées, chiffres, ponctuation), on utilise un défaut
 default_param = (440, 0.5, 'silence')
 
+# Dictionnaire de ponctuation : (durée_silence, modificateur_amplitude, mod_freq, delta_psi, delta_phi)
+PUNCTUATION = {
+    ',': (0.2, 1.0, 1.0, 0.0, 0.0),
+    '.': (0.4, 1.0, 1.0, 0.0, 0.0),
+    ';': (0.3, 1.0, 1.0, 0.0, 0.0),
+    ':': (0.25, 1.0, 1.0, 0.0, 0.0),
+    '!': (0.1, 1.5, 1.0, 0.0, 0.0),  # amplifie le prochain symbole
+    '?': (0.1, 1.0, 1.1, 0.0, 0.1),  # monte la fréquence du précédent (non trivial ici)
+    '…': (0.5, 1.0, 1.0, 0.0, 0.0),
+    '«': (0.1, 1.0, 1.0, -0.3, 0.0), # léger virage à gauche
+    '»': (0.1, 1.0, 1.0, 0.3, 0.0),  # virage à droite
+}
+
+# ============================================
+# 2. Fonction auxiliaire pour symbol_to_triplet
+# ============================================
+
+def symbol_to_triplet(sym, duration):
+    if sym in params:
+        freq, duree, typ = params[sym]
+        if typ == 'voyelle':
+            dpsi = (freq - 220) / (880 - 220) * 2 * np.pi
+            dphi = 0.0
+        else:
+            dpsi = np.random.uniform(-0.5, 0.5)  # small random change
+            dphi = np.random.uniform(-0.1, 0.1)
+        dur = duration
+        return freq, dpsi, dphi, dur
+    else:
+        return 440, 0.0, 0.0, duration
+
 # ============================================
 # 2. Fonction pour convertir un texte en séquence de points
 # ============================================
@@ -164,7 +195,97 @@ def generate_audio_from_text(text, sample_rate=44100, duration_per_letter=0.2, v
     print("Fichier audio généré : output.wav")
 
 # ============================================
-# 5. Exemple d'utilisation
+# 5. Nouvelle fonction avec ponctuation
+# ============================================
+
+def geomatrix_chain_with_punctuation(api_string, step_length=1.0, base_duration=0.1):
+    symbols = list(api_string)
+    n = len(symbols)
+    # Compter les symboles non-punctuation pour les positions
+    non_punct_count = sum(1 for s in symbols if s not in PUNCTUATION)
+    positions = np.zeros((non_punct_count + 1, 3))
+    pos_idx = 0
+    positions[pos_idx] = [0.0, 0.0, 0.0]
+    psi_cum = 0.0
+    phi_cum = 0.0
+    sample_rate = 44100
+    total_duration = 0.0
+    # Première passe pour calculer la durée totale (à cause des silences variables)
+    durations = []
+    for sym in symbols:
+        if sym in PUNCTUATION:
+            d = PUNCTUATION[sym][0]
+        elif sym.lower() in params or sym in params:
+            d = base_duration
+        else:
+            d = base_duration
+        durations.append(d)
+        total_duration += d
+    
+    t = np.linspace(0, total_duration, int(sample_rate * total_duration), endpoint=False)
+    signal = np.zeros_like(t)
+    
+    current_sample = 0
+    next_amplitude_mod = 1.0
+    last_freq = 440.0  # pour gérer '?'
+    
+    for idx, sym in enumerate(symbols):
+        if sym in PUNCTUATION:
+            silence_dur, amp_mod, freq_mod, dpsi, dphi = PUNCTUATION[sym]
+            # Appliquer le silence
+            end_silence = current_sample + int(silence_dur * sample_rate)
+            # Le signal reste à zéro pendant le silence
+            current_sample = end_silence
+            # Stocker un modificateur pour le prochain symbole
+            if sym == '!':
+                next_amplitude_mod = amp_mod
+            elif sym == '?':
+                # Modifier la fréquence du précédent (simplifié : ajuster le dernier freq)
+                last_freq *= freq_mod
+                # Mais comme le signal est déjà généré, on ne peut pas modifier rétrospectivement
+                # Ici, on ignore ou on applique à next, simplifions
+                pass
+            # Mise à jour angles
+            psi_cum += dpsi
+            phi_cum += dphi
+            continue
+        
+        # Symbole normal (voyelle/consonne)
+        freq, dpsi, dphi, dur = symbol_to_triplet(sym.lower(), durations[idx])
+        # Appliquer modificateur d'amplitude
+        amp = 0.3 * next_amplitude_mod
+        next_amplitude_mod = 1.0  # reset
+        
+        psi_cum += dpsi
+        phi_cum += dphi
+        psi_mod = psi_cum % (2*np.pi)
+        phi_mod = phi_cum % np.pi
+        dx = np.cos(psi_mod) * np.cos(phi_mod)
+        dy = np.sin(psi_mod) * np.cos(phi_mod)
+        dz = np.sin(phi_mod)
+        
+        # Mise à jour positions
+        last_pos = positions[pos_idx]
+        new_pos = last_pos + step_length * np.array([dx, dy, dz])
+        pos_idx += 1
+        positions[pos_idx] = new_pos
+        
+        # Génération du signal pour ce symbole
+        n_samples = int(dur * sample_rate)
+        t_local = np.linspace(0, dur, n_samples, endpoint=False)
+        wave_data = amp * np.sin(2 * np.pi * freq * t_local)
+        end_sample = current_sample + n_samples
+        if end_sample > len(signal):
+            # Étendre le signal si nécessaire, mais normalement calculé
+            pass
+        signal[current_sample:end_sample] += wave_data
+        current_sample = end_sample
+        last_freq = freq
+    
+    return positions, signal, t
+
+# ============================================
+# 6. Exemple d'utilisation
 # ============================================
 
 if __name__ == "__main__":
@@ -189,3 +310,16 @@ if __name__ == "__main__":
     
     # Génération audio (optionnel)
     generate_audio_from_text(texte)
+    
+    # Nouvelle fonction avec ponctuation
+    texte_avec_ponct = "Leurs grandes ailes blanches!"
+    positions_3d, signal_audio, t_audio = geomatrix_chain_with_punctuation(texte_avec_ponct)
+    print("Positions 3D générées :", positions_3d.shape)
+    # Sauvegarder l'audio
+    signal_int16 = (signal_audio * 32767).astype(np.int16)
+    with wave.open('output_ponct.wav', 'wb') as wavfile:
+        wavfile.setnchannels(1)
+        wavfile.setsampwidth(2)
+        wavfile.setframerate(44100)
+        wavfile.writeframes(signal_int16.tobytes())
+    print("Fichier audio avec ponctuation généré : output_ponct.wav")
